@@ -31,12 +31,25 @@ class TenantRegistry:
         with open(self.cfg_path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         tenants = data.get("tenants") or {}
+        # Also allow top-level "default" key for non-tenancy runs
+        default_block = data.get("default")
         self._tenants = { k: TenantConfig(v or {}) for k, v in tenants.items() }
+        if default_block:
+            self._tenants["default"] = TenantConfig(default_block)
 
     def get(self, tenant_id: str) -> TenantConfig:
         t = self._tenants.get(tenant_id)
         if not t:
             raise KeyError(f"Unknown tenant_id: {tenant_id}")
+        return t
+
+    def get_default(self) -> TenantConfig:
+        t = self._tenants.get("default")
+        if not t:
+            # If no explicit default provided, fall back to any single tenant for dev
+            if self._tenants:
+                return list(self._tenants.values())[0]
+            raise KeyError("No tenants configured and no default tenant present")
         return t
 
 @lru_cache(maxsize=1)

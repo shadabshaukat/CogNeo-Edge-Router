@@ -9,3 +9,15 @@ tenants:
     auth:
       user: "legal_api"
       pass: "letmein"
+
+# Default routing used when TENANCY_ENABLE=0 and X-Tenant-Id is not provided
+default:
+  default_backend: opensearch
+  default_llm: bedrock
+  upstreams:
+    postgres_api: "http://localhost:8001"
+    oracle_api:   "http://localhost:8002"
+    opensearch_api: "http://localhost:8003"
+  auth:
+    user: "legal_api"
+    pass: "letmein"

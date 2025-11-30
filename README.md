@@ -118,3 +118,17 @@ Notes and roadmap
 - Add per-tenant quotas/rate limits (Redis-based token bucket).
 - Add circuit breakers with upstream retry/backoff policies.
 - Optionally implement in-process retrieval/LLM calls for a single-hop architecture after stabilizing the Router.
+
+## Tenancy and Caching
+
+- Tenancy is optional. When TENANCY_ENABLE=0 (default), the router uses a `default` tenant config from tenants.yaml and the X-Tenant-Id header is not required.
+- When TENANCY_ENABLE=1, the router requires `X-Tenant-Id` and resolves routing by tenant.
+
+### Response caching with Valkey/Redis
+- Enable by setting CACHE_ENABLE=1 and provide CACHE_URL, e.g. `redis://localhost:6379/0` (Valkey is Redis protocol compatible).
+- Control TTL via CACHE_TTL (seconds).
+- Router caches responses for:
+  - /v1/search/vector, /v1/search/hybrid, /v1/search/fts
+  - /v1/search/rag (best-effort; key includes body)
+  - /v1/chat/conversation and /v1/chat/agentic (heuristic key based on message/model/llm_source/top_k)
+- Keys are namespaced by endpoint + backend and a SHA256 of the JSON payload.

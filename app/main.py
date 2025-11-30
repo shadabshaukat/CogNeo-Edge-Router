@@ -2,6 +2,9 @@ from fastapi import FastAPI, Depends, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional, Tuple
 import httpx
+import hashlib, json as _json
+from redis.asyncio import Redis
+
 from .config import settings
 from .tenants import get_registry, TenantRegistry, TenantConfig
 from .types import HybridReq, VectorReq, FtsReq, RagReq, ChatReq
@@ -29,6 +32,7 @@ if settings.metrics_enable:
 
 # Shared httpx clients cache (per upstream base URL)
 _clients: dict[str, httpx.AsyncClient] = {}
+_redis: Optional[Redis] = None
 
 def get_client(base_url: str) -> httpx.AsyncClient:
     c = _clients.get(base_url)
@@ -37,10 +41,27 @@ def get_client(base_url: str) -> httpx.AsyncClient:
         _clients[base_url] = c
     return c
 
+async def get_cache() -> Optional[Redis]:
+    global _redis
+    if not settings.cache_enable:
+        return None
+    if _redis is None:
+        _redis = Redis.from_url(settings.cache_url, decode_responses=True)
+    return _redis
+
 async def resolve_tenant(x_tenant_id: Optional[str] = Header(default=None)) -> Tuple[str, TenantConfig]:
+    reg: TenantRegistry = get_registry()
+    # Tenancy optional: when disabled, use "default" block
+    if not settings.tenancy_enable:
+        cfg = None
+        try:
+            cfg = reg.get("default")
+        except Exception:
+            cfg = reg.get_default()
+        return ("default", cfg)
+    # Tenancy enabled -> require header
     if not x_tenant_id:
         raise HTTPException(401, "Missing X-Tenant-Id")
-    reg: TenantRegistry = get_registry()
     try:
         cfg = reg.get(x_tenant_id)
         return x_tenant_id, cfg
@@ -67,6 +88,11 @@ def upstream_and_auth(cfg: TenantConfig, backend: str) -> Tuple[str, Tuple[str, 
         auth = (auth_dict["user"], auth_dict["pass"])
     return base, auth
 
+def _cache_key(endpoint: str, backend: str, payload: dict) -> str:
+    body = _json.dumps(payload or {}, sort_keys=True, separators=(",", ":"))
+    h = hashlib.sha256(body.encode("utf-8")).hexdigest()
+    return f"{endpoint}:{backend}:{h}"
+
 @app.get("/health")
 async def health():
     return {"ok": True}
@@ -78,10 +104,22 @@ async def vector_search(req: VectorReq, t=Depends(resolve_tenant)):
     backend = pick_backend(cfg, req.backend)
     base, auth = upstream_and_auth(cfg, backend)
     client = get_client(base)
-    r = await client.post("/search/vector", json={"query": req.query, "top_k": req.top_k}, auth=auth)
+    payload = {"query": req.query, "top_k": req.top_k}
+    # Cache check
+    rcache = await get_cache()
+    ck = _cache_key("/v1/search/vector", backend, payload)
+    if rcache:
+        hit = await rcache.get(ck)
+        if hit:
+            return _json.loads(hit)
+    # Proxy
+    r = await client.post("/search/vector", json=payload, auth=auth)
     if r.status_code >= 500:
         raise HTTPException(502, f"Upstream error ({backend})")
-    return r.json()
+    out = r.json()
+    if rcache:
+        await rcache.setex(ck, settings.cache_ttl, _json.dumps(out))
+    return out
 
 @app.post("/v1/search/hybrid")
 async def hybrid_search(req: HybridReq, t=Depends(resolve_tenant)):
@@ -89,10 +127,20 @@ async def hybrid_search(req: HybridReq, t=Depends(resolve_tenant)):
     backend = pick_backend(cfg, req.backend)
     base, auth = upstream_and_auth(cfg, backend)
     client = get_client(base)
-    r = await client.post("/search/hybrid", json={"query": req.query, "top_k": req.top_k, "alpha": req.alpha}, auth=auth)
+    payload = {"query": req.query, "top_k": req.top_k, "alpha": req.alpha}
+    rcache = await get_cache()
+    ck = _cache_key("/v1/search/hybrid", backend, payload)
+    if rcache:
+        hit = await rcache.get(ck)
+        if hit:
+            return _json.loads(hit)
+    r = await client.post("/search/hybrid", json=payload, auth=auth)
     if r.status_code >= 500:
         raise HTTPException(502, f"Upstream error ({backend})")
-    return r.json()
+    out = r.json()
+    if rcache:
+        await rcache.setex(ck, settings.cache_ttl, _json.dumps(out))
+    return out
 
 @app.post("/v1/search/fts")
 async def fts_search(req: FtsReq, t=Depends(resolve_tenant)):
@@ -100,10 +148,20 @@ async def fts_search(req: FtsReq, t=Depends(resolve_tenant)):
     backend = pick_backend(cfg, req.backend)
     base, auth = upstream_and_auth(cfg, backend)
     client = get_client(base)
-    r = await client.post("/search/fts", json={"query": req.query, "top_k": req.top_k, "mode": req.mode}, auth=auth)
+    payload = {"query": req.query, "top_k": req.top_k, "mode": req.mode}
+    rcache = await get_cache()
+    ck = _cache_key("/v1/search/fts", backend, payload)
+    if rcache:
+        hit = await rcache.get(ck)
+        if hit:
+            return _json.loads(hit)
+    r = await client.post("/search/fts", json=payload, auth=auth)
     if r.status_code >= 500:
         raise HTTPException(502, f"Upstream error ({backend})")
-    return r.json()
+    out = r.json()
+    if rcache:
+        await rcache.setex(ck, settings.cache_ttl, _json.dumps(out))
+    return out
 
 # RAG (pass-through to upstream /search/rag)
 @app.post("/v1/search/rag")
@@ -113,12 +171,22 @@ async def rag(req: RagReq, t=Depends(resolve_tenant)):
     base, auth = upstream_and_auth(cfg, backend)
     client = get_client(base)
     payload = req.model_dump(exclude_none=True)
+    # Cache for RAG if context provided and deterministic-ish parameters (best-effort)
+    rcache = await get_cache()
+    ck = _cache_key("/v1/search/rag", backend, payload)
+    if rcache:
+        hit = await rcache.get(ck)
+        if hit:
+            return _json.loads(hit)
     r = await client.post("/search/rag", json=payload, auth=auth)
     if r.status_code >= 500:
         raise HTTPException(502, f"Upstream error ({backend})")
-    return r.json()
+    out = r.json()
+    if rcache:
+        await rcache.setex(ck, settings.cache_ttl, _json.dumps(out))
+    return out
 
-# Chat endpoints
+# Chat endpoints (cache based on message + top_k + model + llm_source as heuristic)
 @app.post("/v1/chat/conversation")
 async def chat_conversation(req: ChatReq, t=Depends(resolve_tenant)):
     tenant_id, cfg = t
@@ -137,10 +205,19 @@ async def chat_conversation(req: ChatReq, t=Depends(resolve_tenant)):
         "repeat_penalty": req.repeat_penalty,
         "top_k": req.top_k,
     }
+    rcache = await get_cache()
+    ck = _cache_key("/v1/chat/conversation", backend, {k:v for k,v in payload.items() if k in ("llm_source","model","message","top_k")})
+    if rcache:
+        hit = await rcache.get(ck)
+        if hit:
+            return _json.loads(hit)
     r = await client.post("/chat/conversation", json={k: v for k, v in payload.items() if v is not None}, auth=auth)
     if r.status_code >= 500:
         raise HTTPException(502, f"Upstream error ({backend})")
-    return r.json()
+    out = r.json()
+    if rcache:
+        await rcache.setex(ck, settings.cache_ttl, _json.dumps(out))
+    return out
 
 @app.post("/v1/chat/agentic")
 async def chat_agentic(req: ChatReq, t=Depends(resolve_tenant)):
@@ -160,7 +237,16 @@ async def chat_agentic(req: ChatReq, t=Depends(resolve_tenant)):
         "repeat_penalty": req.repeat_penalty,
         "top_k": req.top_k,
     }
+    rcache = await get_cache()
+    ck = _cache_key("/v1/chat/agentic", backend, {k:v for k,v in payload.items() if k in ("llm_source","model","message","top_k")})
+    if rcache:
+        hit = await rcache.get(ck)
+        if hit:
+            return _json.loads(hit)
     r = await client.post("/chat/agentic", json={k: v for k, v in payload.items() if v is not None}, auth=auth)
     if r.status_code >= 500:
         raise HTTPException(502, f"Upstream error ({backend})")
-    return r.json()
+    out = r.json()
+    if rcache:
+        await rcache.setex(ck, settings.cache_ttl, _json.dumps(out))
+    return out
