@@ -138,6 +138,10 @@ This repository ships with `.env` out of the box. Edit values as needed.
   - Description: Time allowed for read/write operations with cache (seconds).
   - Values: float seconds, e.g., 1.0, 2.0, 5.0
   - Default: `2.0`
+- CACHE_CLUSTER_ENABLE
+  - Description: Enable Valkey/Redis Cluster client (follows MOVED redirections).
+  - Values: `0` = disabled (single-node client), `1` = enabled (cluster-aware client)
+  - Default: `0`
 - CACHE_NORMALIZE_QUERY
   - Description: Normalize query text before hashing cache keys to improve hit-rate for trivial variations (applies only to cache keys; upstream body is unchanged).
   - Values: `0` = disabled (exact-key caching), `1` = enabled (lowercase, collapse whitespace, strip punctuation)
@@ -157,7 +161,7 @@ This repository ships with `.env` out of the box. Edit values as needed.
   - Description: TTL in seconds for semantic cache entries.
   - Default: `3600`
 - SEMCACHE_EMBEDDER
-  - Description: Embedding model used by the router (fastembed). `fastembed_e5_small` maps to `intfloat/e5-small-v2` (384 dim).
+  - Description: Embedding model used by the router (fastembed). `fastembed_e5_small` maps to `BAAI/bge-small-en-v1.5` (384 dim).
   - Default: `fastembed_e5_small`
 - SEMCACHE_DIM
   - Description: Embedding dimension. 384 for e5-small.
@@ -193,6 +197,8 @@ CACHE_TLS_VERIFY=1
 # Cache timeouts (seconds)
 CACHE_CONNECT_TIMEOUT=1.0
 CACHE_SOCKET_TIMEOUT=2.0
+# Redis Cluster client (follow MOVED redirections)
+CACHE_CLUSTER_ENABLE=1
 CACHE_NORMALIZE_QUERY=1
 
 # Semantic cache (router-side)
@@ -1434,6 +1440,9 @@ Tips:
 - If running in Docker:
   - Inside the router container, `localhost` refers to the container. Use the cache’s reachable IP/hostname on your network.
   - Ensure firewall/security groups allow inbound connections from the router host/container to the cache port.
+- Redis/Valkey Cluster:
+  - If you see MOVED redirections in logs, enable cluster mode in `.env` with `CACHE_CLUSTER_ENABLE=1`.
+  - Keep using your cluster endpoint URL (e.g., `rediss://cluster-endpoint:6379/0`).
 - OCI Valkey/Redis:
   - Verify the service endpoint, port, and network path are reachable from the router host/container.
 

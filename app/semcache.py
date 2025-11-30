@@ -58,20 +58,27 @@ class _Embedder:
         try:
             from fastembed import TextEmbedding  # type: ignore
 
-            # Map the semantic embedder setting to a fastembed model
-            # Default to e5-small-v2 (384 dim) for small footprint CPU-only
-            if model_name == "fastembed_e5_small":
-                fe_model = "intfloat/e5-small-v2"
+            # Map SEMCACHE_EMBEDDER to a supported fastembed model
+            # Prefer BAAI/bge-small-en-v1.5 (384 dim, CPU-friendly) which is supported by fastembed
+            if model_name in ("fastembed_bge_small", "fastembed_e5_small"):
+                fe_model = "BAAI/bge-small-en-v1.5"
                 self.dim = 384
             else:
                 fe_model = model_name
+
             self._model = TextEmbedding(model_name=fe_model)
             # Dry-run to ensure it works
             _ = list(self._model.embed(["hello"]))[0]
             self.enabled = True
             logger.info("Semantic embedder ready: %s (dim=%s)", fe_model, self.dim)
         except Exception as e:
-            logger.warning("Semantic embedder unavailable (fastembed missing or error): %s", e)
+            # Try to give a helpful hint about supported models
+            try:
+                from fastembed import TextEmbedding as _TE  # type: ignore
+                models = getattr(_TE, "list_supported_models", lambda: [])()
+                logger.warning("Semantic embedder unavailable: %s. Supported models: %s", e, models)
+            except Exception:
+                logger.warning("Semantic embedder unavailable (fastembed missing or error): %s", e)
             self.enabled = False
             self._model = None
 

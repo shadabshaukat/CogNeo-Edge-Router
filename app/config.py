@@ -82,6 +82,11 @@ class Settings(BaseSettings):
         False,
         validation_alias=AliasChoices("CACHE_NORMALIZE_QUERY"),
     )
+    # Valkey/Redis Cluster mode (use when endpoint returns MOVED redirections)
+    cache_cluster_enable: bool = Field(
+        False,
+        validation_alias=AliasChoices("CACHE_CLUSTER_ENABLE"),
+    )
 
     # Semantic cache (router-side, backed by OpenSearch or pgvector)
     semcache_enable: bool = Field(

@@ -4,6 +4,7 @@ from typing import Optional, Tuple
 import httpx
 import hashlib, json as _json
 from redis.asyncio import Redis
+from redis.asyncio.cluster import RedisCluster
 from urllib.parse import urlparse
 import ssl
 import logging
@@ -39,6 +40,12 @@ if settings.metrics_enable:
 _clients: dict[str, httpx.AsyncClient] = {}
 _redis: Optional[Redis] = None
 logger = logging.getLogger("cogneo-edge-router")
+# Ensure INFO-level output for cache HIT/MISS/SET visibility
+if not logger.handlers:
+    _h = logging.StreamHandler()
+    _h.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+    logger.addHandler(_h)
+logger.setLevel(logging.INFO)
 
 def get_client(base_url: str) -> httpx.AsyncClient:
     c = _clients.get(base_url)
@@ -52,7 +59,7 @@ async def get_cache() -> Optional[Redis]:
     if not settings.cache_enable:
         return None
     if _redis is None:
-        # Respect TLS verification setting for Valkey/Redis (rediss://)
+        # Respect TLS verification and support Cluster mode (handles MOVED redirections)
         try:
             parsed = urlparse(settings.cache_url)
             kwargs = dict(
@@ -60,18 +67,29 @@ async def get_cache() -> Optional[Redis]:
                 socket_connect_timeout=settings.cache_connect_timeout,
                 socket_timeout=settings.cache_socket_timeout,
             )
+            tls_kwargs = {}
             if parsed.scheme == "rediss" and not settings.cache_tls_verify:
-                _redis = Redis.from_url(settings.cache_url, ssl_cert_reqs=ssl.CERT_NONE, **kwargs)
+                tls_kwargs["ssl_cert_reqs"] = ssl.CERT_NONE
+            if settings.cache_cluster_enable:
+                _redis = RedisCluster.from_url(settings.cache_url, **kwargs, **tls_kwargs)
             else:
-                _redis = Redis.from_url(settings.cache_url, **kwargs)
+                _redis = Redis.from_url(settings.cache_url, **kwargs, **tls_kwargs)
         except Exception:
             # Fallback: minimal client with timeouts
-            _redis = Redis.from_url(
-                settings.cache_url,
-                decode_responses=True,
-                socket_connect_timeout=settings.cache_connect_timeout,
-                socket_timeout=settings.cache_socket_timeout,
-            )
+            if settings.cache_cluster_enable:
+                _redis = RedisCluster.from_url(
+                    settings.cache_url,
+                    decode_responses=True,
+                    socket_connect_timeout=settings.cache_connect_timeout,
+                    socket_timeout=settings.cache_socket_timeout,
+                )
+            else:
+                _redis = Redis.from_url(
+                    settings.cache_url,
+                    decode_responses=True,
+                    socket_connect_timeout=settings.cache_connect_timeout,
+                    socket_timeout=settings.cache_socket_timeout,
+                )
     return _redis
 
 async def cache_get(key: str) -> Optional[str]:
