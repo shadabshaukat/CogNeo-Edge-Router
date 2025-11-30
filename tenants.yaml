@@ -1,23 +1,25 @@
+---
+# CogNeo-Edge-Router tenants routing configuration
+
 tenants:
   tenantA:
-    default_backend: opensearch         # postgres | oracle | opensearch
-    default_llm: bedrock                # ollama | oci_genai | bedrock
+    default_backend: "opensearch"
+    default_llm: "bedrock"
     upstreams:
-      postgres_api: "http://localhost:8001"
-      oracle_api:   "http://localhost:8002"
-      opensearch_api:"http://localhost:8003"
+      postgres_api: "http://localhost:8000"
+      oracle_api:   "http://10.150.1.59:8000"
+      opensearch_api: "http://10.150.1.82:8000"
     auth:
-    user: "cogneo_api"
-    pass: "letmein"
+      user: "cogneo_api"
+      pass: "letmein"
 
-# Default routing used when TENANCY_ENABLE=0 and X-Tenant-Id is not provided
 default:
-  default_backend: opensearch
-  default_llm: bedrock
+  default_backend: "opensearch"
+  default_llm: "oci_genai"
   upstreams:
-    postgres_api: "http://localhost:8001"
-    oracle_api:   "http://64.181.230.208:8000"
-    opensearch_api: "http://10.150.1.224:8000"
+    postgres_api: "http://localhost:8000"
+    oracle_api:   "http://10.150.1.59:8000"
+    opensearch_api: "http://10.150.1.82:8000"
   auth:
     user: "cogneo_api"
     pass: "letmein"

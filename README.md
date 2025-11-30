@@ -732,6 +732,556 @@ curl -s -X POST http://localhost:8080/v1/chat/agentic \
 
 ---
 
+## Tenant APIs (with X-Tenant-Id header)
+
+When `TENANCY_ENABLE=1`, include the tenant header. The examples below use `tenantA` from `tenants.yaml`.
+
+Notes:
+- Add header: `-H "X-Tenant-Id: tenantA"`
+- Upstream auth override per request is still supported via `_upstream_user` and `_upstream_pass`.
+
+---
+
+### /v1/search/vector (Tenant)
+
+- Postgres
+```bash
+curl -s -X POST http://localhost:8080/v1/search/vector \
+  -H "X-Tenant-Id: tenantA" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "contract termination clause",
+    "top_k": 5,
+    "backend": "postgres"
+  }'
+```
+
+- Oracle
+```bash
+curl -s -X POST http://localhost:8080/v1/search/vector \
+  -H "X-Tenant-Id: tenantA" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "privacy act exemptions",
+    "top_k": 5,
+    "backend": "oracle"
+  }'
+```
+
+- OpenSearch (with upstream auth override)
+```bash
+curl -s -X POST http://localhost:8080/v1/search/vector \
+  -H "X-Tenant-Id: tenantA" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "equitable estoppel",
+    "top_k": 5,
+    "backend": "opensearch",
+    "_upstream_user": "legal_api",
+    "_upstream_pass": "letmein"
+  }'
+```
+
+---
+
+### /v1/search/hybrid (Tenant)
+
+- Postgres
+```bash
+curl -s -X POST http://localhost:8080/v1/search/hybrid \
+  -H "X-Tenant-Id: tenantA" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "misleading and deceptive conduct",
+    "top_k": 8,
+    "alpha": 0.5,
+    "backend": "postgres"
+  }'
+```
+
+- Oracle
+```bash
+curl -s -X POST http://localhost:8080/v1/search/hybrid \
+  -H "X-Tenant-Id: tenantA" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "spam act penalties",
+    "top_k": 8,
+    "alpha": 0.5,
+    "backend": "oracle"
+  }'
+```
+
+- OpenSearch (with upstream auth override)
+```bash
+curl -s -X POST http://localhost:8080/v1/search/hybrid \
+  -H "X-Tenant-Id: tenantA" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "email consent requirements",
+    "top_k": 10,
+    "alpha": 0.6,
+    "backend": "opensearch",
+    "_upstream_user": "legal_api",
+    "_upstream_pass": "letmein"
+  }'
+```
+
+---
+
+### /v1/search/fts (Tenant)
+
+- Postgres
+```bash
+curl -s -X POST http://localhost:8080/v1/search/fts \
+  -H "X-Tenant-Id: tenantA" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "law enforcement agency",
+    "top_k": 10,
+    "mode": "both",
+    "backend": "postgres"
+  }'
+```
+
+- Oracle
+```bash
+curl -s -X POST http://localhost:8080/v1/search/fts \
+  -H "X-Tenant-Id: tenantA" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "affirmative consent",
+    "top_k": 10,
+    "mode": "both",
+    "backend": "oracle"
+  }'
+```
+
+- OpenSearch
+```bash
+curl -s -X POST http://localhost:8080/v1/search/fts \
+  -H "X-Tenant-Id: tenantA" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "telecommunications regulation",
+    "top_k": 10,
+    "mode": "both",
+    "backend": "opensearch"
+  }'
+```
+
+---
+
+### /v1/search/rag (Tenant)
+
+- Backend: Postgres, LLM: Ollama
+```bash
+curl -s -X POST http://localhost:8080/v1/search/rag \
+  -H "X-Tenant-Id: tenantA" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "backend": "postgres",
+    "llm_source": "ollama",
+    "model": "llama3",
+    "question": "Summarize penalties under the Spam Act",
+    "temperature": 0.1,
+    "top_p": 0.9,
+    "max_tokens": 1024
+  }'
+```
+
+- Backend: Postgres, LLM: OCI GenAI
+```bash
+curl -s -X POST http://localhost:8080/v1/search/rag \
+  -H "X-Tenant-Id: tenantA" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "backend": "postgres",
+    "llm_source": "oci_genai",
+    "model": "ocid1.generativeaimodel.oc1..xxxxx",
+    "question": "Provide recent judgments on misleading conduct",
+    "temperature": 0.1,
+    "top_p": 0.9,
+    "max_tokens": 1024
+  }'
+```
+
+- Backend: Postgres, LLM: Bedrock
+```bash
+curl -s -X POST http://localhost:8080/v1/search/rag \
+  -H "X-Tenant-Id: tenantA" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "backend": "postgres",
+    "llm_source": "bedrock",
+    "model": "anthropic.claude-3-haiku-20240307-v1:0",
+    "question": "List key factors in consent under APP",
+    "temperature": 0.1,
+    "top_p": 0.9,
+    "max_tokens": 1024
+  }'
+```
+
+- Backend: Oracle, LLM: Ollama
+```bash
+curl -s -X POST http://localhost:8080/v1/search/rag \
+  -H "X-Tenant-Id: tenantA" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "backend": "oracle",
+    "llm_source": "ollama",
+    "model": "llama3",
+    "question": "Explain cross-border disclosure requirements",
+    "temperature": 0.1,
+    "top_p": 0.9,
+    "max_tokens": 1024
+  }'
+```
+
+- Backend: Oracle, LLM: OCI GenAI
+```bash
+curl -s -X POST http://localhost:8080/v1/search/rag \
+  -H "X-Tenant-Id: tenantA" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "backend": "oracle",
+    "llm_source": "oci_genai",
+    "model": "ocid1.generativeaimodel.oc1..xxxxx",
+    "question": "List mandatory reportable data breaches",
+    "temperature": 0.1,
+    "top_p": 0.9,
+    "max_tokens": 1024
+  }'
+```
+
+- Backend: Oracle, LLM: Bedrock
+```bash
+curl -s -X POST http://localhost:8080/v1/search/rag \
+  -H "X-Tenant-Id: tenantA" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "backend": "oracle",
+    "llm_source": "bedrock",
+    "model": "anthropic.claude-3-haiku-20240307-v1:0",
+    "question": "Provide summary of APP 7 direct marketing",
+    "temperature": 0.1,
+    "top_p": 0.9,
+    "max_tokens": 1024
+  }'
+```
+
+- Backend: OpenSearch, LLM: Ollama
+```bash
+curl -s -X POST http://localhost:8080/v1/search/rag \
+  -H "X-Tenant-Id: tenantA" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "backend": "opensearch",
+    "llm_source": "ollama",
+    "model": "llama3",
+    "question": "What is an eligible data breach?",
+    "temperature": 0.1,
+    "top_p": 0.9,
+    "max_tokens": 1024
+  }'
+```
+
+- Backend: OpenSearch, LLM: OCI GenAI
+```bash
+curl -s -X POST http://localhost:8080/v1/search/rag \
+  -H "X-Tenant-Id: tenantA" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "backend": "opensearch",
+    "llm_source": "oci_genai",
+    "model": "ocid1.generativeaimodel.oc1..xxxxx",
+    "question": "Summarize obligations under APP 10 and 11",
+    "temperature": 0.1,
+    "top_p": 0.9,
+    "max_tokens": 1024
+  }'
+```
+
+- Backend: OpenSearch, LLM: Bedrock
+```bash
+curl -s -X POST http://localhost:8080/v1/search/rag \
+  -H "X-Tenant-Id: tenantA" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "backend": "opensearch",
+    "llm_source": "bedrock",
+    "model": "anthropic.claude-3-haiku-20240307-v1:0",
+    "question": "Provide a summary of consent requirements under APP",
+    "temperature": 0.1,
+    "top_p": 0.9,
+    "max_tokens": 1024
+  }'
+```
+
+---
+
+### /v1/chat/conversation (Tenant)
+
+- Backend: Postgres, LLM: Ollama
+```bash
+curl -s -X POST http://localhost:8080/v1/chat/conversation \
+  -H "X-Tenant-Id: tenantA" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "backend": "postgres",
+    "llm_source": "ollama",
+    "model": "llama3",
+    "message": "What is a Notifiable Data Breach?",
+    "top_k": 10
+  }'
+```
+
+- Backend: Postgres, LLM: OCI GenAI
+```bash
+curl -s -X POST http://localhost:8080/v1/chat/conversation \
+  -H "X-Tenant-Id: tenantA" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "backend": "postgres",
+    "llm_source": "oci_genai",
+    "model": "ocid1.generativeaimodel.oc1..xxxxx",
+    "message": "Explain consent vs implied consent under APP.",
+    "top_k": 10
+  }'
+```
+
+- Backend: Postgres, LLM: Bedrock
+```bash
+curl -s -X POST http://localhost:8080/v1/chat/conversation \
+  -H "X-Tenant-Id: tenantA" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "backend": "postgres",
+    "llm_source": "bedrock",
+    "model": "anthropic.claude-3-haiku-20240307-v1:0",
+    "message": "Provide case examples on misleading conduct.",
+    "top_k": 10
+  }'
+```
+
+- Backend: Oracle, LLM: Ollama
+```bash
+curl -s -X POST http://localhost:8080/v1/chat/conversation \
+  -H "X-Tenant-Id: tenantA" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "backend": "oracle",
+    "llm_source": "ollama",
+    "model": "llama3",
+    "message": "Give a brief on APP 8 cross-border disclosure.",
+    "top_k": 10
+  }'
+```
+
+- Backend: Oracle, LLM: OCI GenAI (with upstream auth override)
+```bash
+curl -s -X POST http://localhost:8080/v1/chat/conversation \
+  -H "X-Tenant-Id: tenantA" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "backend": "oracle",
+    "llm_source": "oci_genai",
+    "model": "ocid1.generativeaimodel.oc1..xxxxx",
+    "message": "Which APPs cover direct marketing?",
+    "top_k": 10,
+    "_upstream_user": "cogneo_api",
+    "_upstream_pass": "letmein"
+  }'
+```
+
+- Backend: Oracle, LLM: Bedrock
+```bash
+curl -s -X POST http://localhost:8080/v1/chat/conversation \
+  -H "X-Tenant-Id: tenantA" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "backend": "oracle",
+    "llm_source": "bedrock",
+    "model": "anthropic.claude-3-haiku-20240307-v1:0",
+    "message": "Summarize OAIC guidance on consent.",
+    "top_k": 10
+  }'
+```
+
+- Backend: OpenSearch, LLM: Ollama
+```bash
+curl -s -X POST http://localhost:8080/v1/chat/conversation \
+  -H "X-Tenant-Id: tenantA" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "backend": "opensearch",
+    "llm_source": "ollama",
+    "model": "llama3",
+    "message": "Outline exemptions in Australian Privacy Principles.",
+    "top_k": 10
+  }'
+```
+
+- Backend: OpenSearch, LLM: OCI GenAI
+```bash
+curl -s -X POST http://localhost:8080/v1/chat/conversation \
+  -H "X-Tenant-Id: tenantA" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "backend": "opensearch",
+    "llm_source": "oci_genai",
+    "model": "ocid1.generativeaimodel.oc1..xxxxx",
+    "message": "Explain obligations under APP 10 and 11.",
+    "top_k": 10
+  }'
+```
+
+- Backend: OpenSearch, LLM: Bedrock
+```bash
+curl -s -X POST http://localhost:8080/v1/chat/conversation \
+  -H "X-Tenant-Id: tenantA" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "backend": "opensearch",
+    "llm_source": "bedrock",
+    "model": "anthropic.claude-3-haiku-20240307-v1:0",
+    "message": "Provide case references on cross-border disclosure.",
+    "top_k": 10
+  }'
+```
+
+---
+
+### /v1/chat/agentic (Tenant)
+
+- Backend: Postgres, LLM: Ollama
+```bash
+curl -s -X POST http://localhost:8080/v1/chat/agentic \
+  -H "X-Tenant-Id: tenantA" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "backend": "postgres",
+    "llm_source": "ollama",
+    "model": "llama3",
+    "message": "Explain implied consent with legal citations.",
+    "top_k": 10
+  }'
+```
+
+- Backend: Postgres, LLM: OCI GenAI
+```bash
+curl -s -X POST http://localhost:8080/v1/chat/agentic \
+  -H "X-Tenant-Id: tenantA" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "backend": "postgres",
+    "llm_source": "oci_genai",
+    "model": "ocid1.generativeaimodel.oc1..xxxxx",
+    "message": "Explain mandatory breach notification thresholds.",
+    "top_k": 10
+  }'
+```
+
+- Backend: Postgres, LLM: Bedrock
+```bash
+curl -s -X POST http://localhost:8080/v1/chat/agentic \
+  -H "X-Tenant-Id: tenantA" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "backend": "postgres",
+    "llm_source": "bedrock",
+    "model": "anthropic.claude-3-haiku-20240307-v1:0",
+    "message": "Summarize APP 11 security requirements with citations.",
+    "top_k": 10
+  }'
+```
+
+- Backend: Oracle, LLM: Ollama
+```bash
+curl -s -X POST http://localhost:8080/v1/chat/agentic \
+  -H "X-Tenant-Id: tenantA" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "backend": "oracle",
+    "llm_source": "ollama",
+    "model": "llama3",
+    "message": "Provide legal basis for cross-border disclosure exceptions.",
+    "top_k": 10
+  }'
+```
+
+- Backend: Oracle, LLM: OCI GenAI
+```bash
+curl -s -X POST http://localhost:8080/v1/chat/agentic \
+  -H "X-Tenant-Id: tenantA" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "backend": "oracle",
+    "llm_source": "oci_genai",
+    "model": "ocid1.generativeaimodel.oc1..xxxxx",
+    "message": "Outline APP 7 with sources.",
+    "top_k": 10
+  }'
+```
+
+- Backend: Oracle, LLM: Bedrock
+```bash
+curl -s -X POST http://localhost:8080/v1/chat/agentic \
+  -H "X-Tenant-Id: tenantA" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "backend": "oracle",
+    "llm_source": "bedrock",
+    "model": "anthropic.claude-3-haiku-20240307-v1:0",
+    "message": "Cite examples of implied consent in practice.",
+    "top_k": 10
+  }'
+```
+
+- Backend: OpenSearch, LLM: Ollama
+```bash
+curl -s -X POST http://localhost:8080/v1/chat/agentic \
+  -H "X-Tenant-Id: tenantA" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "backend": "opensearch",
+    "llm_source": "ollama",
+    "model": "llama3",
+    "message": "Explain data minimization principles with references.",
+    "top_k": 10
+  }'
+```
+
+- Backend: OpenSearch, LLM: OCI GenAI
+```bash
+curl -s -X POST http://localhost:8080/v1/chat/agentic \
+  -H "X-Tenant-Id: tenantA" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "backend": "opensearch",
+    "llm_source": "oci_genai",
+    "model": "ocid1.generativeaimodel.oc1..xxxxx",
+    "message": "Discuss overseas recipient obligations with citations.",
+    "top_k": 10
+  }'
+```
+
+- Backend: OpenSearch, LLM: Bedrock
+```bash
+curl -s -X POST http://localhost:8080/v1/chat/agentic \
+  -H "X-Tenant-Id: tenantA" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "backend": "opensearch",
+    "llm_source": "bedrock",
+    "model": "anthropic.claude-3-haiku-20240307-v1:0",
+    "message": "Detail cross-border disclosure rules with citations.",
+    "top_k": 10
+  }'
+```
+
+---
+
 ## Response Caching (Valkey/Redis)
 
 - Enable caching via `.env`:
