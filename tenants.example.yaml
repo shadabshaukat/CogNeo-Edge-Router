@@ -1,0 +1,11 @@
+tenants:
+  tenantA:
+    default_backend: opensearch         # postgres | oracle | opensearch
+    default_llm: bedrock                # ollama | oci_genai | bedrock
+    upstreams:
+      postgres_api: "http://localhost:8001"
+      oracle_api:   "http://localhost:8002"
+      opensearch_api:"http://localhost:8003"
+    auth:
+      user: "legal_api"
+      pass: "letmein"
