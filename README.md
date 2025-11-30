@@ -138,6 +138,34 @@ This repository ships with `.env` out of the box. Edit values as needed.
   - Description: Time allowed for read/write operations with cache (seconds).
   - Values: float seconds, e.g., 1.0, 2.0, 5.0
   - Default: `2.0`
+- CACHE_NORMALIZE_QUERY
+  - Description: Normalize query text before hashing cache keys to improve hit-rate for trivial variations (applies only to cache keys; upstream body is unchanged).
+  - Values: `0` = disabled (exact-key caching), `1` = enabled (lowercase, collapse whitespace, strip punctuation)
+  - Default: `0`
+- SEMCACHE_ENABLE
+  - Description: Enable semantic cache (router-side) to reuse responses for semantically similar questions.
+  - Values: `0` = disabled, `1` = enabled
+  - Default: `0`
+- SEMCACHE_PROVIDER
+  - Description: Backend for semantic cache index/storage.
+  - Values: `opensearch` or `pgvector`
+  - Default: `opensearch`
+- SEMCACHE_THRESHOLD
+  - Description: Cosine similarity threshold for semantic cache hits (0..1, higher is stricter).
+  - Default: `0.90`
+- SEMCACHE_TTL
+  - Description: TTL in seconds for semantic cache entries.
+  - Default: `3600`
+- SEMCACHE_EMBEDDER
+  - Description: Embedding model used by the router (fastembed). `fastembed_e5_small` maps to `intfloat/e5-small-v2` (384 dim).
+  - Default: `fastembed_e5_small`
+- SEMCACHE_DIM
+  - Description: Embedding dimension. 384 for e5-small.
+  - Default: `384`
+- SEMCACHE_OS_URL/SEMCACHE_OS_INDEX/SEMCACHE_OS_USER/SEMCACHE_OS_PASS
+  - Description: OpenSearch endpoint, index and optional basic auth for semantic cache provider.
+- SEMCACHE_PG_DSN/SEMCACHE_PG_TABLE
+  - Description: PostgreSQL DSN and table name for pgvector semantic cache provider.
 
 Example `.env`:
 ```ini
@@ -165,6 +193,23 @@ CACHE_TLS_VERIFY=1
 # Cache timeouts (seconds)
 CACHE_CONNECT_TIMEOUT=1.0
 CACHE_SOCKET_TIMEOUT=2.0
+CACHE_NORMALIZE_QUERY=1
+
+# Semantic cache (router-side)
+SEMCACHE_ENABLE=0
+SEMCACHE_PROVIDER=opensearch
+SEMCACHE_THRESHOLD=0.90
+SEMCACHE_TTL=3600
+SEMCACHE_EMBEDDER=fastembed_e5_small
+SEMCACHE_DIM=384
+# OpenSearch provider
+SEMCACHE_OS_URL=http://localhost:9200
+SEMCACHE_OS_INDEX=semcache
+SEMCACHE_OS_USER=
+SEMCACHE_OS_PASS=
+# pgvector provider
+SEMCACHE_PG_DSN=postgresql://postgres:postgres@localhost:5432/postgres
+SEMCACHE_PG_TABLE=semcache
 ```
 
 ---
@@ -1307,6 +1352,51 @@ curl -s -X POST http://localhost:8080/v1/chat/agentic \
 - Cache keys are namespaced by endpoint and backend with SHA256 of the normalized JSON body.
 
 ---
+
+## Cache logging (HIT/MISS/SET)
+
+- The router logs cache activity to stdout:
+  - CACHE HIT <endpoint> backend=<b> key=<k>
+  - CACHE MISS <endpoint> backend=<b> key=<k> -> proxy & store
+  - CACHE SET <endpoint> backend=<b> key=<k> ttl=<ttl>
+- These logs appear when identical requests (by cache key) are served from cache or written to cache.
+- To influence hit-rate for trivial variations, toggle normalization:
+  - In `.env`: `CACHE_NORMALIZE_QUERY=1` (applies to vector/hybrid/fts -> "query", rag -> "question", chat -> "message")
+
+## Advanced caching: normalization and semantic
+
+- Normalization cache (lightweight, implemented)
+  - Purpose: improve hits for trivial text variations (case, spacing, punctuation).
+  - How: when `CACHE_NORMALIZE_QUERY=1`, the router normalizes the text used to derive the cache key, but forwards the original body to the upstream untouched.
+  - Scope: vector/hybrid/fts use `query`, rag uses `question`, chat uses `message`.
+
+- Semantic cache (higher payoff, moderate complexity)
+  - Purpose: reuse answers for paraphrased questions that are semantically similar.
+  - Design (router-side):
+    - Store previous Q/A with a query embedding in a vector index (OpenSearch k-NN or pgvector).
+    - On a new request, embed the incoming text and search nearest neighbor within a similarity threshold (e.g., cosine >= 0.90).
+    - If a match is found (same tenant/backend/llm context), return cached response.
+    - Otherwise call upstream, then write both the exact-key cache and semantic entry for future reuse.
+  - Suggested fields:
+    - tenant_id, endpoint, backend, llm_source, model, params_hash, query_text, query_embedding (vector), response_json, created_at, ttl
+  - Controls (router env):
+    - SEMCACHE_ENABLE=0|1
+    - SEMCACHE_PROVIDER=opensearch|pgvector
+    - SEMCACHE_THRESHOLD=0.90
+    - SEMCACHE_TTL=3600
+    - SEMCACHE_EMBEDDER=fastembed_e5_small
+    - SEMCACHE_DIM=384
+    - SEMCACHE_OS_URL/SEMCACHE_OS_INDEX[/SEMCACHE_OS_USER/SEMCACHE_OS_PASS]
+    - SEMCACHE_PG_DSN/SEMCACHE_PG_TABLE
+  - Oracle 26ai note:
+    - The semantic cache lives in the router and is independent of the vector search backend (postgres/oracle/opensearch).
+    - Current providers are OpenSearch and pgvector. Oracle Database 23ai/26ai support vector search and could be added as a future provider by storing embeddings in an Oracle table with a vector index. This would require adding an `oracle26ai` provider using the Python `oracledb` driver and appropriate schema. Until then, semantic caching works across Oracle backend requests using OS or pgvector as the router’s semantic store.
+  - Safety:
+    - Scope by tenant and backend/llm to avoid cross-tenant bleed.
+    - Apply TTLs and versioning to invalidate on major changes.
+  - Implementation location:
+    - Recommended in this router (edge) so all backends benefit uniformly.
+    - Optionally, a backend can expose its own semantic caching; the router would then just forward traffic.
 
 ## Production Notes
 

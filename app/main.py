@@ -7,6 +7,8 @@ from redis.asyncio import Redis
 from urllib.parse import urlparse
 import ssl
 import logging
+import re, string
+from .semcache import get_semantic_cache, SemContext
 
 from .config import settings
 from .tenants import get_registry, TenantRegistry, TenantConfig
@@ -150,6 +152,20 @@ def _extract_auth(payload: dict, default_auth: Tuple[str, str] | None) -> tuple[
         return (user, pwd), payload
     return default_auth, payload
 
+def _norm_text(s: Optional[str]) -> Optional[str]:
+    """
+    Lightweight normalization to improve cache key hit-rate for trivial variations.
+    Applies only to cache keys (never mutates upstream request body).
+    """
+    if not isinstance(s, str):
+        return s
+    if not settings.cache_normalize_query:
+        return s
+    t = s.lower()
+    t = re.sub(r"\s+", " ", t).strip()  # collapse whitespace
+    t = t.translate(str.maketrans("", "", string.punctuation))  # strip punctuation
+    return t
+
 @app.get("/health")
 async def health():
     return {"ok": True}
@@ -163,16 +179,29 @@ async def vector_search(req: VectorReq, t=Depends(resolve_tenant)):
     client = get_client(base)
     payload = {"query": req.query, "top_k": req.top_k}
     auth_eff, payload2 = _extract_auth(dict(payload), auth)
-    # Cache check (safe)
-    ck = _cache_key("/v1/search/vector", backend, payload2)
+    # Cache key (apply normalization to query only for keying)
+    payload_cache = dict(payload2)
+    if "query" in payload_cache:
+        payload_cache["query"] = _norm_text(payload_cache["query"])
+    ck = _cache_key("/v1/search/vector", backend, payload_cache)
     hit = await cache_get(ck)
     if hit:
+        logger.info("CACHE HIT /v1/search/vector backend=%s key=%s", backend, ck)
         return _json.loads(hit)
+    # Semantic cache (best-effort)
+    semc = await get_semantic_cache()
+    sh = await semc.try_get(req.query, SemContext(tenant_id=tenant_id, endpoint="/v1/search/vector", backend=backend))
+    if sh is not None:
+        return sh
+    logger.info("CACHE MISS /v1/search/vector backend=%s key=%s -> proxy & store", backend, ck)
     # Proxy
     r = await client.post("/search/vector", json=payload2, auth=auth_eff)
     if r.status_code >= 500:
         raise HTTPException(502, f"Upstream error ({backend})")
     out = r.json()
+    logger.info("CACHE SET /v1/search/vector backend=%s key=%s ttl=%s", backend, ck, settings.cache_ttl)
+    semc = await get_semantic_cache()
+    await semc.put(req.query, SemContext(tenant_id=tenant_id, endpoint="/v1/search/vector", backend=backend), out)
     await cache_setex(ck, settings.cache_ttl, _json.dumps(out))
     return out
 
@@ -184,14 +213,27 @@ async def hybrid_search(req: HybridReq, t=Depends(resolve_tenant)):
     client = get_client(base)
     payload = {"query": req.query, "top_k": req.top_k, "alpha": req.alpha}
     auth_eff, payload2 = _extract_auth(dict(payload), auth)
-    ck = _cache_key("/v1/search/hybrid", backend, payload2)
+    payload_cache = dict(payload2)
+    if "query" in payload_cache:
+        payload_cache["query"] = _norm_text(payload_cache["query"])
+    ck = _cache_key("/v1/search/hybrid", backend, payload_cache)
     hit = await cache_get(ck)
     if hit:
+        logger.info("CACHE HIT /v1/search/hybrid backend=%s key=%s", backend, ck)
         return _json.loads(hit)
+    # Semantic cache (best-effort)
+    semc = await get_semantic_cache()
+    sh = await semc.try_get(req.query, SemContext(tenant_id=tenant_id, endpoint="/v1/search/hybrid", backend=backend))
+    if sh is not None:
+        return sh
+    logger.info("CACHE MISS /v1/search/hybrid backend=%s key=%s -> proxy & store", backend, ck)
     r = await client.post("/search/hybrid", json=payload2, auth=auth_eff)
     if r.status_code >= 500:
         raise HTTPException(502, f"Upstream error ({backend})")
     out = r.json()
+    logger.info("CACHE SET /v1/search/hybrid backend=%s key=%s ttl=%s", backend, ck, settings.cache_ttl)
+    semc = await get_semantic_cache()
+    await semc.put(req.query, SemContext(tenant_id=tenant_id, endpoint="/v1/search/hybrid", backend=backend), out)
     await cache_setex(ck, settings.cache_ttl, _json.dumps(out))
     return out
 
@@ -203,14 +245,27 @@ async def fts_search(req: FtsReq, t=Depends(resolve_tenant)):
     client = get_client(base)
     payload = {"query": req.query, "top_k": req.top_k, "mode": req.mode}
     auth_eff, payload2 = _extract_auth(dict(payload), auth)
-    ck = _cache_key("/v1/search/fts", backend, payload2)
+    payload_cache = dict(payload2)
+    if "query" in payload_cache:
+        payload_cache["query"] = _norm_text(payload_cache["query"])
+    ck = _cache_key("/v1/search/fts", backend, payload_cache)
     hit = await cache_get(ck)
     if hit:
+        logger.info("CACHE HIT /v1/search/fts backend=%s key=%s", backend, ck)
         return _json.loads(hit)
+    # Semantic cache (best-effort)
+    semc = await get_semantic_cache()
+    sh = await semc.try_get(req.query, SemContext(tenant_id=tenant_id, endpoint="/v1/search/fts", backend=backend))
+    if sh is not None:
+        return sh
+    logger.info("CACHE MISS /v1/search/fts backend=%s key=%s -> proxy & store", backend, ck)
     r = await client.post("/search/fts", json=payload2, auth=auth_eff)
     if r.status_code >= 500:
         raise HTTPException(502, f"Upstream error ({backend})")
     out = r.json()
+    logger.info("CACHE SET /v1/search/fts backend=%s key=%s ttl=%s", backend, ck, settings.cache_ttl)
+    semc = await get_semantic_cache()
+    await semc.put(req.query, SemContext(tenant_id=tenant_id, endpoint="/v1/search/fts", backend=backend), out)
     await cache_setex(ck, settings.cache_ttl, _json.dumps(out))
     return out
 
@@ -224,14 +279,46 @@ async def rag(req: RagReq, t=Depends(resolve_tenant)):
     payload = req.model_dump(exclude_none=True)
     auth_eff, payload2 = _extract_auth(dict(payload), auth)
     # Cache for RAG if context provided and deterministic-ish parameters (best-effort)
-    ck = _cache_key("/v1/search/rag", backend, payload2)
+    payload_cache = dict(payload2)
+    if "question" in payload_cache:
+        payload_cache["question"] = _norm_text(payload_cache["question"])
+    ck = _cache_key("/v1/search/rag", backend, payload_cache)
     hit = await cache_get(ck)
     if hit:
+        logger.info("CACHE HIT /v1/search/rag backend=%s key=%s", backend, ck)
         return _json.loads(hit)
+    # Semantic cache (best-effort)
+    semc = await get_semantic_cache()
+    sh = await semc.try_get(
+        req.question,
+        SemContext(
+            tenant_id=tenant_id,
+            endpoint="/v1/search/rag",
+            backend=backend,
+            llm_source=pick_llm(cfg, req.llm_source),
+            model=req.model,
+        ),
+    )
+    if sh is not None:
+        return sh
+    logger.info("CACHE MISS /v1/search/rag backend=%s key=%s -> proxy & store", backend, ck)
     r = await client.post("/search/rag", json=payload2, auth=auth_eff)
     if r.status_code >= 500:
         raise HTTPException(502, f"Upstream error ({backend})")
     out = r.json()
+    logger.info("CACHE SET /v1/search/rag backend=%s key=%s ttl=%s", backend, ck, settings.cache_ttl)
+    semc = await get_semantic_cache()
+    await semc.put(
+        req.question,
+        SemContext(
+            tenant_id=tenant_id,
+            endpoint="/v1/search/rag",
+            backend=backend,
+            llm_source=pick_llm(cfg, req.llm_source),
+            model=req.model,
+        ),
+        out,
+    )
     await cache_setex(ck, settings.cache_ttl, _json.dumps(out))
     return out
 
@@ -255,14 +342,46 @@ async def chat_conversation(req: ChatReq, t=Depends(resolve_tenant)):
         "top_k": req.top_k,
     }
     auth_eff, payload2 = _extract_auth(dict(payload), auth)
-    ck = _cache_key("/v1/chat/conversation", backend, {k:v for k,v in payload2.items() if k in ("llm_source","model","message","top_k")})
+    key_subset = {k: v for k, v in payload2.items() if k in ("llm_source","model","message","top_k")}
+    if "message" in key_subset:
+        key_subset["message"] = _norm_text(key_subset["message"])
+    ck = _cache_key("/v1/chat/conversation", backend, key_subset)
     hit = await cache_get(ck)
     if hit:
+        logger.info("CACHE HIT /v1/chat/conversation backend=%s key=%s", backend, ck)
         return _json.loads(hit)
+    # Semantic cache (best-effort)
+    semc = await get_semantic_cache()
+    sh = await semc.try_get(
+        req.message,
+        SemContext(
+            tenant_id=tenant_id,
+            endpoint="/v1/chat/conversation",
+            backend=backend,
+            llm_source=pick_llm(cfg, req.llm_source),
+            model=req.model,
+        ),
+    )
+    if sh is not None:
+        return sh
+    logger.info("CACHE MISS /v1/chat/conversation backend=%s key=%s -> proxy & store", backend, ck)
     r = await client.post("/chat/conversation", json={k: v for k, v in payload2.items() if v is not None}, auth=auth_eff)
     if r.status_code >= 500:
         raise HTTPException(502, f"Upstream error ({backend})")
     out = r.json()
+    logger.info("CACHE SET /v1/chat/conversation backend=%s key=%s ttl=%s", backend, ck, settings.cache_ttl)
+    semc = await get_semantic_cache()
+    await semc.put(
+        req.message,
+        SemContext(
+            tenant_id=tenant_id,
+            endpoint="/v1/chat/conversation",
+            backend=backend,
+            llm_source=pick_llm(cfg, req.llm_source),
+            model=req.model,
+        ),
+        out,
+    )
     await cache_setex(ck, settings.cache_ttl, _json.dumps(out))
     return out
 
@@ -285,13 +404,45 @@ async def chat_agentic(req: ChatReq, t=Depends(resolve_tenant)):
         "top_k": req.top_k,
     }
     auth_eff, payload2 = _extract_auth(dict(payload), auth)
-    ck = _cache_key("/v1/chat/agentic", backend, {k:v for k,v in payload2.items() if k in ("llm_source","model","message","top_k")})
+    key_subset = {k: v for k, v in payload2.items() if k in ("llm_source","model","message","top_k")}
+    if "message" in key_subset:
+        key_subset["message"] = _norm_text(key_subset["message"])
+    ck = _cache_key("/v1/chat/agentic", backend, key_subset)
     hit = await cache_get(ck)
     if hit:
+        logger.info("CACHE HIT /v1/chat/agentic backend=%s key=%s", backend, ck)
         return _json.loads(hit)
+    # Semantic cache (best-effort)
+    semc = await get_semantic_cache()
+    sh = await semc.try_get(
+        req.message,
+        SemContext(
+            tenant_id=tenant_id,
+            endpoint="/v1/chat/agentic",
+            backend=backend,
+            llm_source=pick_llm(cfg, req.llm_source),
+            model=req.model,
+        ),
+    )
+    if sh is not None:
+        return sh
+    logger.info("CACHE MISS /v1/chat/agentic backend=%s key=%s -> proxy & store", backend, ck)
     r = await client.post("/chat/agentic", json={k: v for k, v in payload2.items() if v is not None}, auth=auth_eff)
     if r.status_code >= 500:
         raise HTTPException(502, f"Upstream error ({backend})")
     out = r.json()
+    logger.info("CACHE SET /v1/chat/agentic backend=%s key=%s ttl=%s", backend, ck, settings.cache_ttl)
+    semc = await get_semantic_cache()
+    await semc.put(
+        req.message,
+        SemContext(
+            tenant_id=tenant_id,
+            endpoint="/v1/chat/agentic",
+            backend=backend,
+            llm_source=pick_llm(cfg, req.llm_source),
+            model=req.model,
+        ),
+        out,
+    )
     await cache_setex(ck, settings.cache_ttl, _json.dumps(out))
     return out

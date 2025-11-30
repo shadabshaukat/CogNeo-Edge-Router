@@ -77,5 +77,65 @@ class Settings(BaseSettings):
         2.0,
         validation_alias=AliasChoices("CACHE_SOCKET_TIMEOUT"),
     )
+    # Normalize query text before hashing cache keys for search endpoints
+    cache_normalize_query: bool = Field(
+        False,
+        validation_alias=AliasChoices("CACHE_NORMALIZE_QUERY"),
+    )
+
+    # Semantic cache (router-side, backed by OpenSearch or pgvector)
+    semcache_enable: bool = Field(
+        False,
+        validation_alias=AliasChoices("SEMCACHE_ENABLE"),
+    )
+    semcache_provider: str = Field(
+        "opensearch",  # opensearch | pgvector
+        validation_alias=AliasChoices("SEMCACHE_PROVIDER"),
+    )
+    semcache_threshold: float = Field(
+        0.90,  # cosine similarity threshold
+        validation_alias=AliasChoices("SEMCACHE_THRESHOLD"),
+    )
+    semcache_ttl: int = Field(
+        3600,  # seconds
+        validation_alias=AliasChoices("SEMCACHE_TTL"),
+    )
+    # Embedding model (router local)
+    semcache_embedder: str = Field(
+        "fastembed_e5_small",  # reserved for future options
+        validation_alias=AliasChoices("SEMCACHE_EMBEDDER"),
+    )
+    semcache_dim: int = Field(
+        384,  # default dimension for e5-small
+        validation_alias=AliasChoices("SEMCACHE_DIM"),
+    )
+
+    # OpenSearch semantic cache config
+    semcache_os_url: str = Field(
+        "http://localhost:9200",
+        validation_alias=AliasChoices("SEMCACHE_OS_URL"),
+    )
+    semcache_os_index: str = Field(
+        "semcache",
+        validation_alias=AliasChoices("SEMCACHE_OS_INDEX"),
+    )
+    semcache_os_user: str = Field(
+        "",
+        validation_alias=AliasChoices("SEMCACHE_OS_USER"),
+    )
+    semcache_os_pass: str = Field(
+        "",
+        validation_alias=AliasChoices("SEMCACHE_OS_PASS"),
+    )
+
+    # pgvector semantic cache config
+    semcache_pg_dsn: str = Field(
+        "postgresql://postgres:postgres@localhost:5432/postgres",
+        validation_alias=AliasChoices("SEMCACHE_PG_DSN"),
+    )
+    semcache_pg_table: str = Field(
+        "semcache",
+        validation_alias=AliasChoices("SEMCACHE_PG_TABLE"),
+    )
 
 settings = Settings()
