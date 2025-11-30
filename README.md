@@ -130,6 +130,14 @@ This repository ships with `.env` out of the box. Edit values as needed.
   - Description: TLS certificate verification for rediss://.
   - Values: `1` = verify (recommended), `0` = skip for testing.
   - Default: `1`
+- CACHE_CONNECT_TIMEOUT
+  - Description: Time to establish TCP/TLS connection to cache (seconds).
+  - Values: float seconds, e.g., 0.5, 1.0, 2.0
+  - Default: `1.0`
+- CACHE_SOCKET_TIMEOUT
+  - Description: Time allowed for read/write operations with cache (seconds).
+  - Values: float seconds, e.g., 1.0, 2.0, 5.0
+  - Default: `2.0`
 
 Example `.env`:
 ```ini
@@ -154,6 +162,9 @@ CACHE_TTL=60
 # redis:// for plaintext, rediss:// for TLS
 CACHE_URL=redis://localhost:6379/0
 CACHE_TLS_VERIFY=1
+# Cache timeouts (seconds)
+CACHE_CONNECT_TIMEOUT=1.0
+CACHE_SOCKET_TIMEOUT=2.0
 ```
 
 ---
@@ -1349,4 +1360,3 @@ Disable cache to test:
 ```ini
 CACHE_ENABLE=0
 ```
-

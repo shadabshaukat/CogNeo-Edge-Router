@@ -68,5 +68,14 @@ class Settings(BaseSettings):
         True,
         validation_alias=AliasChoices("CACHE_TLS_VERIFY"),
     )
+    # Redis/Valkey client timeouts (seconds)
+    cache_connect_timeout: float = Field(
+        1.0,
+        validation_alias=AliasChoices("CACHE_CONNECT_TIMEOUT"),
+    )
+    cache_socket_timeout: float = Field(
+        2.0,
+        validation_alias=AliasChoices("CACHE_SOCKET_TIMEOUT"),
+    )
 
 settings = Settings()
