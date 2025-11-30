@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     cache_enable: bool = True
     cache_ttl: int = 60
     cache_url: str = "redis://localhost:6379/0"
+    # When using TLS (rediss://), control certificate verification
+    cache_tls_verify: bool = True
 
     class Config:
         env_prefix = ""

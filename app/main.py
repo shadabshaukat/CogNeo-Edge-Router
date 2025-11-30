@@ -4,6 +4,8 @@ from typing import Optional, Tuple
 import httpx
 import hashlib, json as _json
 from redis.asyncio import Redis
+from urllib.parse import urlparse
+import ssl
 
 from .config import settings
 from .tenants import get_registry, TenantRegistry, TenantConfig
@@ -46,7 +48,16 @@ async def get_cache() -> Optional[Redis]:
     if not settings.cache_enable:
         return None
     if _redis is None:
-        _redis = Redis.from_url(settings.cache_url, decode_responses=True)
+        # Respect TLS verification setting for Valkey/Redis (rediss://)
+        try:
+            parsed = urlparse(settings.cache_url)
+            if parsed.scheme == "rediss" and not settings.cache_tls_verify:
+                _redis = Redis.from_url(settings.cache_url, decode_responses=True, ssl_cert_reqs=ssl.CERT_NONE)
+            else:
+                _redis = Redis.from_url(settings.cache_url, decode_responses=True)
+        except Exception:
+            # Fallback: create without SSL kwargs
+            _redis = Redis.from_url(settings.cache_url, decode_responses=True)
     return _redis
 
 async def resolve_tenant(x_tenant_id: Optional[str] = Header(default=None)) -> Tuple[str, TenantConfig]:
@@ -93,6 +104,17 @@ def _cache_key(endpoint: str, backend: str, payload: dict) -> str:
     h = hashlib.sha256(body.encode("utf-8")).hexdigest()
     return f"{endpoint}:{backend}:{h}"
 
+def _extract_auth(payload: dict, default_auth: Tuple[str, str] | None) -> tuple[Tuple[str, str] | None, dict]:
+    """
+    Allow overriding upstream basic auth by passing _upstream_user/_upstream_pass in payload.
+    These keys are removed from the forwarded payload if present.
+    """
+    user = payload.pop("_upstream_user", None)
+    pwd = payload.pop("_upstream_pass", None)
+    if user is not None and pwd is not None:
+        return (user, pwd), payload
+    return default_auth, payload
+
 @app.get("/health")
 async def health():
     return {"ok": True}
@@ -105,15 +127,16 @@ async def vector_search(req: VectorReq, t=Depends(resolve_tenant)):
     base, auth = upstream_and_auth(cfg, backend)
     client = get_client(base)
     payload = {"query": req.query, "top_k": req.top_k}
+    auth_eff, payload2 = _extract_auth(dict(payload), auth)
     # Cache check
     rcache = await get_cache()
-    ck = _cache_key("/v1/search/vector", backend, payload)
+    ck = _cache_key("/v1/search/vector", backend, payload2)
     if rcache:
         hit = await rcache.get(ck)
         if hit:
             return _json.loads(hit)
     # Proxy
-    r = await client.post("/search/vector", json=payload, auth=auth)
+    r = await client.post("/search/vector", json=payload2, auth=auth_eff)
     if r.status_code >= 500:
         raise HTTPException(502, f"Upstream error ({backend})")
     out = r.json()
@@ -128,13 +151,14 @@ async def hybrid_search(req: HybridReq, t=Depends(resolve_tenant)):
     base, auth = upstream_and_auth(cfg, backend)
     client = get_client(base)
     payload = {"query": req.query, "top_k": req.top_k, "alpha": req.alpha}
+    auth_eff, payload2 = _extract_auth(dict(payload), auth)
     rcache = await get_cache()
-    ck = _cache_key("/v1/search/hybrid", backend, payload)
+    ck = _cache_key("/v1/search/hybrid", backend, payload2)
     if rcache:
         hit = await rcache.get(ck)
         if hit:
             return _json.loads(hit)
-    r = await client.post("/search/hybrid", json=payload, auth=auth)
+    r = await client.post("/search/hybrid", json=payload2, auth=auth_eff)
     if r.status_code >= 500:
         raise HTTPException(502, f"Upstream error ({backend})")
     out = r.json()
@@ -149,13 +173,14 @@ async def fts_search(req: FtsReq, t=Depends(resolve_tenant)):
     base, auth = upstream_and_auth(cfg, backend)
     client = get_client(base)
     payload = {"query": req.query, "top_k": req.top_k, "mode": req.mode}
+    auth_eff, payload2 = _extract_auth(dict(payload), auth)
     rcache = await get_cache()
-    ck = _cache_key("/v1/search/fts", backend, payload)
+    ck = _cache_key("/v1/search/fts", backend, payload2)
     if rcache:
         hit = await rcache.get(ck)
         if hit:
             return _json.loads(hit)
-    r = await client.post("/search/fts", json=payload, auth=auth)
+    r = await client.post("/search/fts", json=payload2, auth=auth_eff)
     if r.status_code >= 500:
         raise HTTPException(502, f"Upstream error ({backend})")
     out = r.json()
@@ -171,14 +196,15 @@ async def rag(req: RagReq, t=Depends(resolve_tenant)):
     base, auth = upstream_and_auth(cfg, backend)
     client = get_client(base)
     payload = req.model_dump(exclude_none=True)
+    auth_eff, payload2 = _extract_auth(dict(payload), auth)
     # Cache for RAG if context provided and deterministic-ish parameters (best-effort)
     rcache = await get_cache()
-    ck = _cache_key("/v1/search/rag", backend, payload)
+    ck = _cache_key("/v1/search/rag", backend, payload2)
     if rcache:
         hit = await rcache.get(ck)
         if hit:
             return _json.loads(hit)
-    r = await client.post("/search/rag", json=payload, auth=auth)
+    r = await client.post("/search/rag", json=payload2, auth=auth_eff)
     if r.status_code >= 500:
         raise HTTPException(502, f"Upstream error ({backend})")
     out = r.json()
@@ -206,12 +232,13 @@ async def chat_conversation(req: ChatReq, t=Depends(resolve_tenant)):
         "top_k": req.top_k,
     }
     rcache = await get_cache()
-    ck = _cache_key("/v1/chat/conversation", backend, {k:v for k,v in payload.items() if k in ("llm_source","model","message","top_k")})
+    auth_eff, payload2 = _extract_auth(dict(payload), auth)
+    ck = _cache_key("/v1/chat/conversation", backend, {k:v for k,v in payload2.items() if k in ("llm_source","model","message","top_k")})
     if rcache:
         hit = await rcache.get(ck)
         if hit:
             return _json.loads(hit)
-    r = await client.post("/chat/conversation", json={k: v for k, v in payload.items() if v is not None}, auth=auth)
+    r = await client.post("/chat/conversation", json={k: v for k, v in payload2.items() if v is not None}, auth=auth_eff)
     if r.status_code >= 500:
         raise HTTPException(502, f"Upstream error ({backend})")
     out = r.json()
@@ -238,12 +265,13 @@ async def chat_agentic(req: ChatReq, t=Depends(resolve_tenant)):
         "top_k": req.top_k,
     }
     rcache = await get_cache()
-    ck = _cache_key("/v1/chat/agentic", backend, {k:v for k,v in payload.items() if k in ("llm_source","model","message","top_k")})
+    auth_eff, payload2 = _extract_auth(dict(payload), auth)
+    ck = _cache_key("/v1/chat/agentic", backend, {k:v for k,v in payload2.items() if k in ("llm_source","model","message","top_k")})
     if rcache:
         hit = await rcache.get(ck)
         if hit:
             return _json.loads(hit)
-    r = await client.post("/chat/agentic", json={k: v for k, v in payload.items() if v is not None}, auth=auth)
+    r = await client.post("/chat/agentic", json={k: v for k, v in payload2.items() if v is not None}, auth=auth_eff)
     if r.status_code >= 500:
         raise HTTPException(502, f"Upstream error ({backend})")
     out = r.json()
