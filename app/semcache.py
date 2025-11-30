@@ -181,7 +181,7 @@ class _OpenSearchProvider:
             logger.warning("OpenSearch semcache: search error: %s", e)
             return None
 
-    async def index_doc(self, vec: List[float], ctx: SemContext, query_text: str, response: Dict[str, Any], ttl: int):
+    async def index_doc(self, vec: List[float], ctx: SemContext, query_text: str, response: Dict[str, Any], ttl: int) -> bool:
         try:
             body = {
                 "tenant_id": ctx.tenant_id,
@@ -199,8 +199,11 @@ class _OpenSearchProvider:
             resp = await self._client.post(f"/{self.index}/_doc", json=body)
             if resp.status_code >= 300:
                 logger.warning("OpenSearch semcache: index doc failed: %s %s", resp.status_code, resp.text)
+                return False
+            return True
         except Exception as e:
             logger.warning("OpenSearch semcache: index error: %s", e)
+            return False
 
 
 class _PgVectorProvider:
@@ -331,6 +334,7 @@ class _PgVectorProvider:
                     ),
                 )
                 conn.commit()
+                return True
         finally:
             conn.close()
 
@@ -340,9 +344,64 @@ class _PgVectorProvider:
     async def search(self, vec: List[float], ctx: SemContext, threshold: float) -> Optional[Dict[str, Any]]:
         return await anyio.to_thread.run_sync(self._search, vec, ctx, threshold)
 
-    async def index_doc(self, vec: List[float], ctx: SemContext, query_text: str, response: Dict[str, Any], ttl: int):
-        await anyio.to_thread.run_sync(self._index, vec, ctx, query_text, response, ttl)
+    async def index_doc(self, vec: List[float], ctx: SemContext, query_text: str, response: Dict[str, Any], ttl: int) -> bool:
+        return await anyio.to_thread.run_sync(self._index, vec, ctx, query_text, response, ttl)
 
+
+class _MemoryProvider:
+    def __init__(self, dim: int = 384):
+        self.dim = dim
+        self._docs: List[Dict[str, Any]] = []
+        try:
+            import anyio  # noqa: F401
+            self._lock = anyio.Lock()
+        except Exception:
+            class _Noop:
+                async def __aenter__(self): return None
+                async def __aexit__(self, exc_type, exc, tb): return False
+            self._lock = _Noop()
+
+    async def ensure_ready(self):
+        return
+
+    async def search(self, vec: List[float], ctx: SemContext, threshold: float) -> Optional[Dict[str, Any]]:
+        async with self._lock:
+            now = _utc_now()
+            self._docs = [d for d in self._docs if d["expires_at"] > now]
+            best = None
+            best_sim = -1.0
+            for d in self._docs:
+                if d["tenant_id"] != ctx.tenant_id or d["endpoint"] != ctx.endpoint or d["backend"] != ctx.backend:
+                    continue
+                if ctx.llm_source and d.get("llm_source") != ctx.llm_source:
+                    continue
+                if ctx.model and d.get("model") != ctx.model:
+                    continue
+                sim = _cosine_similarity(vec, d["embedding"])
+                if sim > best_sim:
+                    best_sim = sim
+                    best = d
+            if best and best_sim >= threshold:
+                return best.get("response")
+            return None
+
+    async def index_doc(self, vec: List[float], ctx: SemContext, query_text: str, response: Dict[str, Any], ttl: int) -> bool:
+        async with self._lock:
+            self._docs.append(
+                {
+                    "tenant_id": ctx.tenant_id,
+                    "endpoint": ctx.endpoint,
+                    "backend": ctx.backend,
+                    "llm_source": ctx.llm_source,
+                    "model": ctx.model,
+                    "query_text": query_text,
+                    "embedding": list(map(float, vec)),
+                    "response": response,
+                    "created_at": _utc_now(),
+                    "expires_at": _utc_in(ttl),
+                }
+            )
+        return True
 
 class SemanticCache:
     def __init__(self):
@@ -376,6 +435,8 @@ class SemanticCache:
                     table=settings.semcache_pg_table,
                     dim=self.embedder.dim,
                 )
+            elif prov == "memory":
+                self.provider = _MemoryProvider(dim=self.embedder.dim)
             else:
                 logger.warning("Unknown SEMCACHE_PROVIDER=%s; disabling semantic cache", prov)
                 self.enabled = False
@@ -418,10 +479,14 @@ class SemanticCache:
         if not vec:
             return
         try:
-            await self.provider.index_doc(vec, ctx, text, response, self.ttl)
-            logger.info("SEMCACHE SET %s backend=%s tenant=%s ttl=%s", ctx.endpoint, ctx.backend, ctx.tenant_id, self.ttl)
+            ok = await self.provider.index_doc(vec, ctx, text, response, self.ttl)
         except Exception as e:
             logger.warning("Semantic cache put failed: %s", e)
+            return
+        if ok:
+            logger.info("SEMCACHE SET %s backend=%s tenant=%s ttl=%s", ctx.endpoint, ctx.backend, ctx.tenant_id, self.ttl)
+        else:
+            logger.warning("SEMCACHE SET SKIPPED (provider error) %s backend=%s tenant=%s", ctx.endpoint, ctx.backend, ctx.tenant_id)
 
 
 _semcache_singleton: Optional[SemanticCache] = None

@@ -152,7 +152,7 @@ This repository ships with `.env` out of the box. Edit values as needed.
   - Default: `0`
 - SEMCACHE_PROVIDER
   - Description: Backend for semantic cache index/storage.
-  - Values: `opensearch` or `pgvector`
+  - Values: `memory`, `opensearch`, or `pgvector`
   - Default: `opensearch`
 - SEMCACHE_THRESHOLD
   - Description: Cosine similarity threshold for semantic cache hits (0..1, higher is stricter).
@@ -203,6 +203,9 @@ CACHE_NORMALIZE_QUERY=1
 
 # Semantic cache (router-side)
 SEMCACHE_ENABLE=0
+# For ephemeral single-instance testing (not shared across router replicas):
+# SEMCACHE_PROVIDER=memory
+# Scalable options:
 SEMCACHE_PROVIDER=opensearch
 SEMCACHE_THRESHOLD=0.90
 SEMCACHE_TTL=3600
@@ -1387,7 +1390,7 @@ curl -s -X POST http://localhost:8080/v1/chat/agentic \
     - tenant_id, endpoint, backend, llm_source, model, params_hash, query_text, query_embedding (vector), response_json, created_at, ttl
   - Controls (router env):
     - SEMCACHE_ENABLE=0|1
-    - SEMCACHE_PROVIDER=opensearch|pgvector
+    - SEMCACHE_PROVIDER=memory|opensearch|pgvector
     - SEMCACHE_THRESHOLD=0.90
     - SEMCACHE_TTL=3600
     - SEMCACHE_EMBEDDER=fastembed_e5_small
@@ -1403,6 +1406,18 @@ curl -s -X POST http://localhost:8080/v1/chat/agentic \
   - Implementation location:
     - Recommended in this router (edge) so all backends benefit uniformly.
     - Optionally, a backend can expose its own semantic caching; the router would then just forward traffic.
+
+Which provider should I use? Is an external store necessary?
+- memory (in-process, new): Fastest to enable, zero setup. Lives inside a single router process, so:
+  - Pros: no external dependency; ideal for dev, demos, or small single-instance deployments.
+  - Cons: not shared across multiple router replicas; cleared on process restart; not durable.
+- opensearch (distributed): k-NN vector index with HNSW/cosine, horizontally scalable.
+  - Pros: shared across router replicas; durable; good ANN performance at scale.
+  - Cons: requires OpenSearch availability and network connectivity from the router.
+- pgvector (PostgreSQL extension): ANN vector search in Postgres.
+  - Pros: reuse existing Postgres; durable; shared across replicas; simpler ops if you already manage PG.
+  - Cons: requires pgvector extension and proper indexing/tuning.
+- Do you need an external store? Not strictly. For production, an external provider (opensearch/pgvector) is recommended so semantic entries persist across restarts and are visible to all router replicas. For local/dev or single-instance scenarios, `SEMCACHE_PROVIDER=memory` is sufficient and simplest.
 
 ## Production Notes
 
