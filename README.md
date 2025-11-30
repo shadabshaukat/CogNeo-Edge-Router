@@ -1310,3 +1310,43 @@ curl -s -X POST http://localhost:8080/v1/chat/agentic \
 
 - Replace model identifiers with ones available in your environment (e.g., Ollama model tags, OCI model OCIDs, Bedrock model IDs).
 - When overriding upstream auth per request, the `_upstream_user` and `_upstream_pass` fields are stripped from the forwarded payload and used only for upstream authentication.
+
+---
+
+## Cache connectivity and troubleshooting (Valkey/Redis)
+
+The router uses Valkey/Redis for response caching. If the cache is unreachable or times out, the router now degrades gracefully and continues processing the request without cache.
+
+Recommended settings
+```ini
+# Cache timeouts (seconds)
+CACHE_CONNECT_TIMEOUT=1.0   # time to establish TCP/TLS connection
+CACHE_SOCKET_TIMEOUT=2.0    # time for read/write operations
+```
+
+Tips:
+- If you don’t have a cache available yet:
+  - Set `CACHE_ENABLE=0` to disable caching entirely.
+- If you use TLS:
+  - Use `CACHE_URL=rediss://host:port/db`
+  - Keep `CACHE_TLS_VERIFY=1` in production (set `0` only for testing/self-signed).
+- If running in Docker:
+  - Inside the router container, `localhost` refers to the container. Use the cache’s reachable IP/hostname on your network.
+  - Ensure firewall/security groups allow inbound connections from the router host/container to the cache port.
+- OCI Valkey/Redis:
+  - Verify the service endpoint, port, and network path are reachable from the router host/container.
+
+Example minimal cache configuration
+```ini
+CACHE_ENABLE=1
+CACHE_URL=redis://your-cache-host:6379/0
+CACHE_TLS_VERIFY=1
+CACHE_CONNECT_TIMEOUT=1.0
+CACHE_SOCKET_TIMEOUT=2.0
+```
+
+Disable cache to test:
+```ini
+CACHE_ENABLE=0
+```
+
